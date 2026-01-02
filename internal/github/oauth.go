@@ -27,9 +27,9 @@ func InitOAuth(cfg *config.Config) {
 		ClientID:     cfg.GitHubClientID,
 		ClientSecret: cfg.GitHubClientSecret,
 		RedirectURL:  cfg.GitHubCallbackURL,
-	
-		Scopes:       []string{"repo", "user:email"},
-		Endpoint:     githubOAuth.Endpoint,
+
+		Scopes:   []string{"repo", "user:email"},
+		Endpoint: githubOAuth.Endpoint,
 	}
 }
 
@@ -104,14 +104,15 @@ func HandleGitHubCallback(c *gin.Context) {
 	}
 
 	// Create or update user in database
+	githubID := int64(*user.ID)
 	dbUser := &models.User{
-		GitHubID:  int64(*user.ID),
+		GitHubID:  &githubID,
 		Username:  *user.Login,
 		Email:     email,
 		AvatarURL: avatarURL,
 	}
 
-	result := database.DB.Where("github_id = ?", dbUser.GitHubID).FirstOrCreate(dbUser, models.User{GitHubID: dbUser.GitHubID})
+	result := database.DB.Where("github_id = ?", *dbUser.GitHubID).FirstOrCreate(dbUser, models.User{GitHubID: dbUser.GitHubID})
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error: " + result.Error.Error()})
 		return
@@ -130,12 +131,8 @@ func HandleGitHubCallback(c *gin.Context) {
 		return
 	}
 
-	// Return JWT token to client
-	c.JSON(http.StatusOK, gin.H{
-		"user":       dbUser,
-		"token":      jwtToken,
-		"expires_in": 86400, // 24 hours in seconds
-	})
+	// Redirect to dashboard with token (same as Google OAuth)
+	c.Redirect(http.StatusTemporaryRedirect, "/dashboard?token="+jwtToken)
 }
 
 func generateState() string {

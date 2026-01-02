@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirecting...</title>
+</head>
+<body>
+    <script>
+        // Store token in localStorage
+        const token = "{{.Token}}";
+        if (token) {
+            localStorage.setItem('token', token);
+            // Fetch user info to store in localStorage
+            fetch('/api/profile', {
+                headers: {
+                    'Authorization': 'Bearer ' + token
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to fetch user info');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.user_id) {
+                    localStorage.setItem('user', JSON.stringify({
+                        id: data.user_id,
+                        username: data.username
+                    }));
+                }
+                // Redirect to dashboard (remove token from URL)
+                window.location.href = '/dashboard';
+            })
+            .catch(error => {
+                console.error('Error fetching user info:', error);
+                // Still redirect even if user fetch fails
+                window.location.href = '/dashboard';
+            });
+        } else {
+            window.location.href = '/login';
+        }
+    </script>
+    <p>Redirecting...</p>
+</body>
+</html>

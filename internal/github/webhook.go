@@ -4,15 +4,18 @@ package github
 // This will receive and process GitHub webhook events
 
 import (
+	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
+	"deploy-platform/internal/build"
 	"deploy-platform/internal/config"
 	"deploy-platform/internal/database"
 	"deploy-platform/internal/models"
+	"deploy-platform/internal/queue"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -20,7 +23,11 @@ import (
 	"github.com/google/go-github/v56/github"
 )
 
-var webhookSecret string
+var (
+	webhookSecret string
+	buildService  *build.Service
+	buildQueue    queue.BuildQueue
+)
 
 // InitWebhook initializes webhook secret from config
 func InitWebhook(cfg *config.Config) {
@@ -28,6 +35,26 @@ func InitWebhook(cfg *config.Config) {
 	if webhookSecret == "" {
 		webhookSecret = "nncfebvjhebhjvrevjejrvhjelv" // Default for development
 	}
+}
+
+// InitBuildService initializes the build service for webhook handlers
+func InitBuildService() error {
+	bs, err := build.NewService()
+	if err != nil {
+		return fmt.Errorf("failed to initialize build service: %w", err)
+	}
+	buildService = bs
+	return nil
+}
+
+// InitBuildServiceWithService sets the build service instance directly
+func InitBuildServiceWithService(bs *build.Service) {
+	buildService = bs
+}
+
+// InitBuildQueue sets the build queue instance
+func InitBuildQueue(q queue.BuildQueue) {
+	buildQueue = q
 }
 
 func HandleWebhook(c *gin.Context) {
@@ -122,34 +149,9 @@ func handlePushEvent(c *gin.Context, body []byte) {
 		commitMsg = *pushEvent.HeadCommit.Message
 	}
 
-	// Generate unique hostname (temporary, will be assigned properly later)
-	// Format: project-slug-commit-short.localhost
-	commitSHA := *pushEvent.HeadCommit.ID
-	shortCommit := commitSHA
-	if len(commitSHA) > 7 {
-		shortCommit = commitSHA[:7] // First 7 chars of commit SHA
-	}
-
-	// Use project slug or fallback to repo name
-	projectSlug := project.Slug
-	if projectSlug == "" {
-		projectSlug = strings.ToLower(project.Name)
-		if projectSlug == "" {
-			projectSlug = "deploy"
-		}
-	}
-
-	hostname := fmt.Sprintf("%s-%s.localhost", projectSlug, shortCommit)
-
-	// Ensure uniqueness by checking database
-	var existingDeployment models.Deployment
-	for database.DB.Where("hostname = ?", hostname).First(&existingDeployment).Error == nil {
-		// Hostname exists, generate a new one with random suffix
-		randomBytes := make([]byte, 2)
-		rand.Read(randomBytes)
-		randomSuffix := hex.EncodeToString(randomBytes)
-		hostname = fmt.Sprintf("%s-%s-%s.localhost", projectSlug, shortCommit, randomSuffix)
-	}
+	// Hostname will be assigned during deployment by hostname manager
+	// For now, leave it empty - it will be set when deployment is processed
+	hostname := ""
 
 	// Create deployment
 	deployment := &models.Deployment{
@@ -166,7 +168,28 @@ func handlePushEvent(c *gin.Context, body []byte) {
 		return
 	}
 
-	// TODO: Trigger build (we'll implement this in Phase 4)
+	// Enqueue build job (will be processed by worker pool)
+	if buildQueue != nil {
+		if err := buildQueue.Enqueue(deployment.ID); err != nil {
+			log.Printf("❌ Failed to enqueue deployment %d: %v", deployment.ID, err)
+			database.DB.Model(&models.Deployment{}).Where("id = ?", deployment.ID).Update("status", "failed")
+		} else {
+			log.Printf("✅ Deployment %d enqueued for build", deployment.ID)
+		}
+	} else if buildService != nil {
+		// Fallback to direct build if queue not available
+		go func(deploymentID uint) {
+			ctx := context.Background()
+			if err := buildService.BuildDeployment(ctx, deploymentID); err != nil {
+				log.Printf("❌ Build failed for deployment %d: %v", deploymentID, err)
+				database.DB.Model(&models.Deployment{}).Where("id = ?", deploymentID).Update("status", "failed")
+			} else {
+				log.Printf("✅ Build completed successfully for deployment %d", deploymentID)
+			}
+		}(deployment.ID)
+	} else {
+		log.Println("⚠️  Build service not initialized, skipping build")
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Deployment triggered",

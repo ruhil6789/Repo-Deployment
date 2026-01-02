@@ -8,14 +8,15 @@ import (
 )
 
 type User struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`                          // Primary key, auto-increments
-	GitHubID    int64     `gorm:"column:github_id;uniqueIndex" json:"github_id"` // Unique GitHub user ID
-	Username    string    `gorm:"uniqueIndex" json:"username"`                   // Unique GitHub username
-	Email       string    `json:"email"`
-	AvatarURL   string    `json:"avatar_url"`
-	GitHubToken string    `gorm:"column:github_token;type:text" json:"-"` // GitHub access token (hidden from JSON)
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           uint      `gorm:"primaryKey" json:"id"`                                    // Primary key, auto-increments
+	GitHubID     *int64    `gorm:"column:github_id;uniqueIndex" json:"github_id,omitempty"` // Unique GitHub user ID (nullable)
+	Username     string    `gorm:"uniqueIndex" json:"username"`                             // Unique GitHub username
+	Email        string    `gorm:"uniqueIndex" json:"email"`                                // Unique email
+	PasswordHash string    `gorm:"column:password_hash;type:text" json:"-"`                 // Password hash (hidden from JSON)
+	AvatarURL    string    `json:"avatar_url"`
+	GitHubToken  string    `gorm:"column:github_token;type:text" json:"-"` // GitHub access token (hidden from JSON)
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 
 	Projects []Project `gorm:"foreignKey:UserID" json:"projects,omitempty"` // One-to-many: User has many Projects
 }
@@ -44,7 +45,7 @@ type Deployment struct {
 	CommitSHA         string    `json:"commit_sha"`
 	CommitMsg         string    `json:"commit_msg"`
 	Branch            string    `json:"branch"`
-	Hostname          string    `gorm:"uniqueIndex" json:"hostname"` // Unique hostname
+	Hostname          string    `gorm:"index" json:"hostname"` // Hostname (not unique - can be reused per project)
 	ImageTag          string    `json:"image_tag"`
 	K8sNamespace      string    `json:"k8s_namespace"`
 	K8sDeploymentName string    `json:"k8s_deployment_name"` // Kubernetes deployment name
